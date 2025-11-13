@@ -38,6 +38,15 @@ class MatchedMentionsOutput:
     pred_chains: dict[int, set[int]]
 
 
+@dataclass
+class EvaluationOutput:
+    b3_recall: float
+    b3_precision: float
+    span_recall: float
+    span_precision: float
+    span_f1: float
+
+
 MentionIdx = int
 ChainIdx = int
 
@@ -347,12 +356,13 @@ def match_mentions(
                 break
         else:
             # No match found for this gold mention
-            matched.append(MatchedMention(gold=gold_idx, pred=-1))
+            # matched.append(MatchedMention(gold=gold_idx, pred=-1))
+            pass
 
-    # Add unmatched pred mentions
-    for pred_idx in range(len(pred_mentions)):
-        if pred_idx not in used_pred:
-            matched.append(MatchedMention(gold=-1, pred=pred_idx))
+    # # Add unmatched pred mentions
+    # for pred_idx in range(len(pred_mentions)):
+    #     if pred_idx not in used_pred:
+    #         matched.append(MatchedMention(gold=-1, pred=pred_idx))
 
     matched_gold = {}
     matched_pred = {}
@@ -402,6 +412,8 @@ def b3_recall(gold: CorefOutput, pred: CorefOutput, strategy=strict):
 
         total += len(gold_chain & pred_chain) / len(gold_chain)
 
+    if n == 0:
+        return 0.0
     return total / n
 
 
@@ -423,16 +435,64 @@ def b3_precision(gold: CorefOutput, pred: CorefOutput, strategy=strict):
 
         total += len(gold_chain & pred_chain) / len(pred_chain)
 
+    if n == 0:
+        return 0.0
     return total / n
+
+
+def span_recall(gold: CorefOutput, pred: CorefOutput):
+    flattened_gold = [mention for chain in gold for mention in chain.mentions]
+    flattened_pred = [mention for chain in pred for mention in chain.mentions]
+    num_matches = 0
+    for gold_mention in flattened_gold:
+        for pred_mention in flattened_pred:
+            if strict(gold_mention, pred_mention):
+                num_matches += 1
+    if len(flattened_gold) == 0:
+        return 0.0
+    return num_matches / len(flattened_gold)
+
+
+def span_precision(gold: CorefOutput, pred: CorefOutput):
+    flattened_gold = [mention for chain in gold for mention in chain.mentions]
+    flattened_pred = [mention for chain in pred for mention in chain.mentions]
+    num_matches = 0
+    for pred_mention in flattened_pred:
+        for gold_mention in flattened_gold:
+            if strict(gold_mention, pred_mention):
+                num_matches += 1
+    if len(flattened_pred) == 0:
+        return 0.0
+    return num_matches / len(flattened_pred)
+
+
+def span_f1(gold: CorefOutput, pred: CorefOutput):
+    recall = span_recall(gold, pred)
+    precision = span_precision(gold, pred)
+    if recall + precision == 0:
+        return 0.0
+    return 2 * recall * precision / (recall + precision)
 
 
 def evaluate(
     gold_chunks: list[CorefOutput], pred_chunks: list[CorefOutput], strategy=strict
-) -> tuple[float, float]:
-    recalls = []
-    precisions = []
+) -> EvaluationOutput:
+    b3_recalls = []
+    b3_precisions = []
+    span_recalls = []
+    span_precisions = []
+    span_f1s = []
     for gold_chunk, pred_chunk in zip(gold_chunks, pred_chunks):
-        recalls.append(b3_recall(gold_chunk, pred_chunk, strategy))
-        precisions.append(b3_precision(gold_chunk, pred_chunk, strategy))
+        b3_recalls.append(b3_recall(gold_chunk, pred_chunk, strategy))
+        b3_precisions.append(b3_precision(gold_chunk, pred_chunk, strategy))
+        span_recalls.append(span_recall(gold_chunk, pred_chunk))
+        span_precisions.append(span_precision(gold_chunk, pred_chunk))
+        span_f1s.append(span_f1(gold_chunk, pred_chunk))
 
-    return sum(recalls) / len(recalls), sum(precisions) / len(precisions)
+    return EvaluationOutput(
+        b3_recall=sum(b3_recalls) / len(b3_recalls),
+        b3_precision=sum(b3_precisions) / len(b3_precisions),
+        span_recall=sum(span_recalls) / len(span_recalls),
+        span_precision=sum(span_precisions) / len(span_precisions),
+        span_f1=sum(span_f1s) / len(span_f1s),
+    )
